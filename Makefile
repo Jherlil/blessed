@@ -1,10 +1,10 @@
 .PHONY: default clean build bench fmt add mul rnd blf remote
 
 	CC = cc
-CC_FLAGS ?= -O3 -ffast-math -Wall -Wextra -fomit-frame-pointer -pipe -flto
+CC_FLAGS ?= -O3 -ffast-math -Wall -Wextra -fomit-frame-pointer -pipe -flto -std=gnu11 -msha
 	
 	ifeq ($(shell uname -m),x86_64)
-        CC_FLAGS += -march=native -mtune=native -pthread -lpthread
+        CC_FLAGS += -march=haswell -mtune=native -mavx2 -pthread -lpthread
 	endif
 	
 NASM      = nasm

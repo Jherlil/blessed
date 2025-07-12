@@ -15,6 +15,7 @@
 
 #include "ecc.c"
 #include "xoshiro256ss.h"
+#include <stdalign.h>
 #include <assert.h>
 #include <math.h>
 #include <pthread.h>
@@ -183,10 +184,9 @@ void prng_seed(u64 seed) {
 INLINE u64 rand64() {
 #if defined(__x86_64__) || defined(_M_X64)
     if (_has_rdrand) {
-        u64 val;
-        // Tenta ler do RDRAND algumas vezes em caso de falha transitória
+        unsigned long long val;
         for(int i=0; i<10; ++i) {
-            if (_rdrand64_step(&val)) return val;
+            if (_rdrand64_step(&val)) return (u64)val;
         }
     }
 #endif

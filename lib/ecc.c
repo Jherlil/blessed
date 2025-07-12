@@ -24,10 +24,7 @@
 
 #include "compat.c"
 #define GLOBAL static const
-#define INLINE static inline
 
-typedef uint64_t u64;
-typedef __uint128_t u128;
 typedef u64 fe[4];    // 256bit as 4x64bit
 typedef u64 fe320[5]; // 320bit as 5x64bit
 typedef struct pe { fe x, y, z; } pe;
@@ -37,6 +34,11 @@ GLOBAL fe FE_P = {0xfffffffefffffc2f, 0xffffffffffffffff, 0xffffffffffffffff, 0x
 GLOBAL fe FE_N = {0xbfd25e8cd0364141, 0xbaaedce6af48a03b, 0xfffffffffffffffe, 0xffffffffffffffff};
 GLOBAL fe GLV_LAMBDA = {0xdf02967c1b23bd72, 0x122e22ea20816678, 0xa5261c028812645a, 0x5363ad4cc05c30e0};
 GLOBAL fe GLV_BETA   = {0xc1396c28719501ee, 0x9cf0497512f58995, 0x6e64479eac3434e9, 0x7ae96a2b657c0710};
+// Endomorphism constants (alpha, alpha^2, beta, beta^2) for GLV
+GLOBAL fe A1 = {0xdf02967c1b23bd72, 0x122e22ea20816678, 0xa5261c028812645a, 0x5363ad4cc05c30e0};
+GLOBAL fe A2 = {0xe0cfc810b51283ce, 0xa880b9fc8ec739c2, 0x5ad9e3fd77ed9ba4, 0xac9c52b33fa3cf1f};
+GLOBAL fe B1 = {0xc1396c28719501ee, 0x9cf0497512f58995, 0x6e64479eac3434e9, 0x7ae96a2b657c0710};
+GLOBAL fe B2 = {0x3ec693d68e6afa40, 0x630fb68aed0a766a, 0x919bb86153cbcb16, 0x851695d49a83f8ef};
 GLOBAL fe GLV_N1 = {0x0, 0x0, 0x0, 0xe4437ed6010e8828};
 GLOBAL fe GLV_N2 = {0x0, 0x0, 0x0, 0x6f547fa90abfe4c3};
 GLOBAL fe GLV_N3 = {0x0, 0x0, 0x0, 0x3086d221a7d46bcd};
@@ -593,7 +595,7 @@ void fe_to_wnaf(int16_t *naf, fe k, uint8_t w) {
     if (temp_k[0] & 1) {
       digit = temp_k[0] & (width - 1);
       if (digit >= half_width) digit -= width;
-      fe c;
+      u64 c;
       if (digit > 0) {
         subc64(temp_k[0], digit, 0, &c);
       } else {
@@ -743,25 +745,16 @@ void multi_ec_mul(pe out[], const fe privs[], size_t batch) {
   }
 }
 
+INLINE void fe_modp_mul_avx2(fe out[], const fe in[], const fe scalar[], size_t batch) {
+  for (size_t i = 0; i < batch; ++i)
+    fe_modp_mul(out[i], in[i], scalar[i]);
+}
+
 void ec_jacobi_grprdc_batch_avx2(pe r[], u64 n) {
   if (n == 0) return;
   fe *zz_inv = (fe *)malloc(n * sizeof(fe));
   for (u64 i = 0; i < n; ++i) fe_clone(zz_inv[i], r[i].z);
   fe_modp_grpinv(zz_inv, n);
-
-  // Função auxiliar para multiplicação vetorizada
-  INLINE void fe_modp_mul_avx2(fe out[], const fe in[], const fe scalar[], size_t batch) {
-    for (size_t i = 0; i < batch; i += 4) {
-      size_t current_batch = batch - i > 4 ? 4 : batch - i;
-      __m256i x0 = _mm256_loadu_si256((__m256i*)in[i]);
-      __m256i s0 = _mm256_loadu_si256((__m256i*)scalar[i]);
-      __m256i r0 = _mm256_mul_epu32(x0, s0); // Multiplicação de 32 bits
-      _mm256_storeu_si256((__m256i*)out[i], r0);
-      for (size_t j = 0; j < current_batch; ++j) {
-        fe_modp_mul(out[i + j], in[i + j], scalar[i + j]);
-      }
-    }
-  }
 
   // Vetorizar multiplicações de x e y
   for (u64 i = 0; i < n; i += 8) {
@@ -793,6 +786,26 @@ void ec_jacobi_add_batch_avx2(pe r[], const pe p[], const pe q[], size_t n) {
   }
   for (; i < n; i++) ec_jacobi_add(&r[i], &p[i], &q[i]);
 }
+
+// Compatibility wrappers for missing advanced routines -----------------------
+
+INLINE void _ec_jacobi_add2(pe *r, const pe *p, const pe *q) { ec_jacobi_add(r, p, q); }
+INLINE void _ec_jacobi_dbl2(pe *r, const pe *p) { ec_jacobi_dbl(r, p); }
+
+INLINE void ec_jacobi_mulrdc(pe *r, const pe *p, const fe k) {
+  ec_jacobi_mul(r, p, k);
+  ec_jacobi_rdc(r, r);
+}
+
+void ec_affine_add(pe *r, const pe *p, const pe *q) {
+  pe t; ec_jacobi_add(&t, p, q); ec_jacobi_rdc(&t, &t); pe_clone(r, &t);
+}
+
+void ec_affine_dbl(pe *r, const pe *p) {
+  pe t; ec_jacobi_dbl(&t, p); ec_jacobi_rdc(&t, &t); pe_clone(r, &t);
+}
+
+void _fe_modp_inv_binpow(fe r, const fe a) { fe_modp_inv(r, a); }
 
 // ==========================================================================================
 // || FIM DA SEÇÃO DE OTIMIZAÇÃO                                                           ||

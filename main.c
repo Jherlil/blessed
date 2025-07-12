@@ -476,6 +476,7 @@ void print_range_mask(fe range_s, u32 bits_size, u32 offset, bool use_color) {
 void cmd_rnd(ctx_t *ctx) {
   ctx->ord_offs = MIN(ctx->ord_offs, 255 - ctx->ord_size);
   printf("[RANDOM MODE] offs: %d ~ bits: %d\n\n", ctx->ord_offs, ctx->ord_size);
+  ec_gtable_init();
   ctx_precompute_gpoints(ctx);
   ctx->job_size = MAX_JOB_SIZE;
   ctx->ts_started = tsnow();
@@ -544,7 +545,7 @@ void load_offs_size(ctx_t *ctx, args_t *args) {
   u32 max_offs = MAX(1ul, MAX(MIN_SIZE, range_bits) - default_bits);
   char *raw = arg_str(args, "-d");
   if (!raw && ctx->cmd == CMD_RND) {
-    ctx->ord_offs = rand64(!ctx->has_seed) % max_offs;
+    ctx->ord_offs = rand64() % max_offs;
     ctx->ord_size = default_bits;
     return;
   }
@@ -621,8 +622,12 @@ void init(ctx_t *ctx, args_t *args) {
   char *seed = arg_str(args, "-seed");
   if (seed != NULL) {
     ctx->has_seed = true;
-    srand(encode_seed(seed));
+    u32 s = encode_seed(seed);
+    srand(s);
+    prng_seed(s);
     free(seed);
+  } else {
+    prng_seed(tsnow());
   }
   char *path = arg_str(args, "-f");
   load_filter(ctx, path);

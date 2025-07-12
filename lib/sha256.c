@@ -181,7 +181,7 @@ void sha256_final(u32 state[8], const u8 data[], u32 length) {
     vst1q_u32(&state[4], STATE1);
 }
 
-#elif defined(__x86_64__) && defined(__AVX2__)
+#elif defined(__x86_64__) && defined(__AVX2__) && defined(__SHA__) && 0
 #include <immintrin.h>
 
 void sha256_final(u32 state[8], const u8 data[], u32 length) {

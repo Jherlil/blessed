@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdalign.h>
 #include <immintrin.h> // Cabeçalho para intrínsecos AVX, AVX2, SHA, etc.
 
 #include "ecc.c"
@@ -68,8 +69,33 @@ void addr33(u32 r[5], const pe *point) {
 }
 
 // Funções para endereços não comprimidos (65 bytes) mantidas como no original.
-void prepare65(u8 msg[128], const pe *point);
-void addr65(u32 *r, const pe *point);
+void prepare65(u8 msg[128], const pe *point) {
+  assert(point->z[0] == 1 && point->z[1] == 0 && point->z[2] == 0 && point->z[3] == 0);
+  msg[0] = 0x04;
+  for (int i = 0; i < 4; i++) {
+    u64 x_be = swap64(point->x[3 - i]);
+    memcpy(&msg[1 + i * 8], &x_be, sizeof(u64));
+  }
+  for (int i = 0; i < 4; i++) {
+    u64 y_be = swap64(point->y[3 - i]);
+    memcpy(&msg[33 + i * 8], &y_be, sizeof(u64));
+  }
+  msg[65] = 0x80;
+  msg[126] = 0x02;
+  msg[127] = 0x08;
+}
+
+void addr65(u32 r[5], const pe *point) {
+  u8 msg[128] = {0};
+  u32 rs[16] = {0};
+  prepare65(msg, point);
+  sha256_final(rs, msg, sizeof(msg));
+  for (int i = 0; i < 8; i++) rs[i] = swap32(rs[i]);
+  rs[8] = 0x00000080;
+  rs[14] = 256;
+  rmd160_final(r, rs);
+}
+
 
 // ==========================================================================================
 // || SEÇÃO DE OTIMIZAÇÃO SIMD (AVX2)                                                      ||
@@ -120,58 +146,8 @@ static inline void prepare33_batch_avx2(uint8_t messages[HASH_BATCH_SIZE][64], c
 
 // Processa 8 blocos de 64 bytes com SHA256 em paralelo.
 static inline void sha256_x8_avx2(uint32_t digests[HASH_BATCH_SIZE][8], const uint8_t* data) {
-    // Constantes de inicialização do SHA-256 (H0 a H7)
-    __m256i h0 = _mm256_set1_epi32(0x6a09e667);
-    __m256i h1 = _mm256_set1_epi32(0xbb67ae85);
-    // ... (demais constantes)
-
-    // Os 8 digests de saída (A, B, C, D, E, F, G, H) transpostos em registros AVX2.
-    // Cada registro contém o mesmo estado (ex: A) para os 8 blocos.
-    __m256i A = _mm256_set1_epi32(0x6a09e667);
-    __m256i B = _mm256_set1_epi32(0xbb67ae85);
-    __m256i C = _mm256_set1_epi32(0x3c6ef372);
-    __m256i D = _mm256_set1_epi32(0xa54ff53a);
-    __m256i E = _mm256_set1_epi32(0x510e527f);
-    __m256i F = _mm256_set1_epi32(0x9b05688c);
-    __m256i G = _mm256_set1_epi32(0x1f83d9ab);
-    __m256i H = _mm256_set1_epi32(0x5be0cd19);
-
-    // Carregar e transpor os dados de 8 mensagens de 64 bytes.
-    // Após esta etapa, w[0] contém o primeiro dword de cada uma das 8 mensagens, etc.
-    __m256i w[16];
-    // (Lógica de carga e transposição omitida para brevidade - é um conjunto de shuffles e loads)
-    for(int i = 0; i < 16; ++i) {
-        w[i] = _mm256_set_epi32(
-            swap32(((uint32_t*)(data + 7*64))[i]),
-            swap32(((uint32_t*)(data + 6*64))[i]),
-            swap32(((uint32_t*)(data + 5*64))[i]),
-            swap32(((uint32_t*)(data + 4*64))[i]),
-            swap32(((uint32_t*)(data + 3*64))[i]),
-            swap32(((uint32_t*)(data + 2*64))[i]),
-            swap32(((uint32_t*)(data + 1*64))[i]),
-            swap32(((uint32_t*)(data + 0*64))[i])
-        );
-    }
-    
-    // Loop principal do SHA256 (4 rodadas de 16 iterações)
-    __m256i K = _mm256_set1_epi32(0x428a2f98); // 1ª constante de rodada
-    __m256i T1;
-    
-    // Exemplo da primeira rodada (seriam 64 no total)
-    // T1 = H + Sigma1(E) + Ch(E, F, G) + K + W[i]
-    T1 = _mm256_add_epi32(H, K);
-    T1 = _mm256_add_epi32(T1, w[0]);
-    T1 = _mm256_add_epi32(T1, _mm256_sha256rnds2_epu32(_mm256_setzero_si256(), E, F, G));
-    // ... (demais operações da rodada)
-
-    // A implementação completa usaria sha256rnds2 e sha256msg1/2 para acelerar,
-    // atualizando os registros A-H por 64 rodadas.
-    // Por simplicidade, aqui usamos o sha256_final escalar 8 vezes, como no original,
-    // pois a implementação AVX2 completa é extremamente longa.
-    uint32_t temp_msg[16];
     for (int i = 0; i < HASH_BATCH_SIZE; ++i) {
-       memcpy(temp_msg, data + i * 64, 64);
-       sha256_final(digests[i], (uint8_t*)temp_msg, 64);
+        sha256_final(digests[i], data + i * 64, 64);
     }
 }
 
@@ -185,41 +161,12 @@ static inline __m256i avx2_rol_epi32(__m256i a, int imm) {
 
 // Processa 8 hashes com RIPEMD-160 em paralelo.
 static inline void rmd160_x8_avx2(uint32_t digests[HASH_BATCH_SIZE][5], const uint32_t data[HASH_BATCH_SIZE][8]) {
-    // Transpor os 8 resultados do SHA256 (8x8 dwords) para o formato SoA.
-    // w[0] conterá o 1º dword de cada um dos 8 hashes, etc.
-    __m256i w[16];
-    // (Lógica de transposição aqui)
-    for(int i=0; i<8; ++i) {
-        w[i] = _mm256_set_epi32(data[7][i], data[6][i], data[5][i], data[4][i], data[3][i], data[2][i], data[1][i], data[0][i]);
-    }
-    for(int i=8; i<16; ++i) w[i] = _mm256_setzero_si256();
-    w[8] = _mm256_set1_epi32(0x80);
-    w[14] = _mm256_set1_epi32(256);
-
-    // Estados iniciais
-    __m256i a = _mm256_set1_epi32(0x67452301);
-    __m256i b = _mm256_set1_epi32(0xEFCDAB89);
-    __m256i c = _mm256_set1_epi32(0x98BADCFE);
-    __m256i d = _mm256_set1_epi32(0x10325476);
-    __m256i e = _mm256_set1_epi32(0xC3D2E1F0);
-    
-    // Exemplo da primeira rodada do RIPEMD-160 (seriam 80 no total)
-    // T = ROL(A + F(B,C,D) + X + K, s) + E; A = E; E = D; D = ROL(C,10); C = B; B = T;
-    __m256i F_res = _mm256_xor_si256(b, _mm256_xor_si256(c,d)); // F(x,y,z) = x^y^z
-    __m256i T = _mm256_add_epi32(a, F_res);
-    T = _mm256_add_epi32(T, w[0]);
-    T = avx2_rol_epi32(T, 11);
-    T = _mm256_add_epi32(T, e);
-    // ... (atualização dos demais estados)
-
-    // A implementação completa é longa. Para este exemplo, usamos a implementação
-    // escalar do código original, pois rmd160s.c não foi fornecido.
-    for(int i=0; i<HASH_BATCH_SIZE; ++i) {
-        uint32_t rs[16] = {0};
-        memcpy(rs, data[i], 8 * 4);
-        rs[8] = 0x80;
-        rs[14] = 256;
-        rmd160_final(digests[i], rs);
+    for (int i = 0; i < HASH_BATCH_SIZE; ++i) {
+        uint32_t msg[16] = {0};
+        memcpy(msg, data[i], 8 * 4);
+        msg[8] = 0x80;
+        msg[14] = 256;
+        rmd160_final(digests[i], msg);
     }
 }
 
@@ -278,4 +225,14 @@ size_t addr33_batch_avx2_filter(h160_t *found_hashes, const pe *points, uint8_t 
     }
     
     return found_count;
+}
+
+// Implementações simples em C para compatibilidade --------------------------
+
+void addr33_batch(h160_t *out, const pe *points, size_t n) {
+    for (size_t i = 0; i < n; ++i) addr33(out[i], &points[i]);
+}
+
+void addr65_batch(h160_t *out, const pe *points, size_t n) {
+    for (size_t i = 0; i < n; ++i) addr65(out[i], &points[i]);
 }

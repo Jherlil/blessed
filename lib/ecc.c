@@ -24,10 +24,7 @@
 
 #include "compat.c"
 #define GLOBAL static const
-#define INLINE static inline
 
-typedef uint64_t u64;
-typedef __uint128_t u128;
 typedef u64 fe[4];    // 256bit as 4x64bit
 typedef u64 fe320[5]; // 320bit as 5x64bit
 typedef struct pe { fe x, y, z; } pe;
@@ -598,7 +595,7 @@ void fe_to_wnaf(int16_t *naf, fe k, uint8_t w) {
     if (temp_k[0] & 1) {
       digit = temp_k[0] & (width - 1);
       if (digit >= half_width) digit -= width;
-      fe c;
+      u64 c;
       if (digit > 0) {
         subc64(temp_k[0], digit, 0, &c);
       } else {
@@ -748,7 +745,7 @@ void multi_ec_mul(pe out[], const fe privs[], size_t batch) {
   }
 }
 
-static INLINE void fe_modp_mul_avx2(fe out[], const fe in[], const fe scalar[], size_t batch) {
+INLINE void fe_modp_mul_avx2(fe out[], const fe in[], const fe scalar[], size_t batch) {
   for (size_t i = 0; i < batch; ++i)
     fe_modp_mul(out[i], in[i], scalar[i]);
 }
@@ -789,6 +786,26 @@ void ec_jacobi_add_batch_avx2(pe r[], const pe p[], const pe q[], size_t n) {
   }
   for (; i < n; i++) ec_jacobi_add(&r[i], &p[i], &q[i]);
 }
+
+// Compatibility wrappers for missing advanced routines -----------------------
+
+INLINE void _ec_jacobi_add2(pe *r, const pe *p, const pe *q) { ec_jacobi_add(r, p, q); }
+INLINE void _ec_jacobi_dbl2(pe *r, const pe *p) { ec_jacobi_dbl(r, p); }
+
+INLINE void ec_jacobi_mulrdc(pe *r, const pe *p, const fe k) {
+  ec_jacobi_mul(r, p, k);
+  ec_jacobi_rdc(r, r);
+}
+
+void ec_affine_add(pe *r, const pe *p, const pe *q) {
+  pe t; ec_jacobi_add(&t, p, q); ec_jacobi_rdc(&t, &t); pe_clone(r, &t);
+}
+
+void ec_affine_dbl(pe *r, const pe *p) {
+  pe t; ec_jacobi_dbl(&t, p); ec_jacobi_rdc(&t, &t); pe_clone(r, &t);
+}
+
+void _fe_modp_inv_binpow(fe r, const fe a) { fe_modp_inv(r, a); }
 
 // ==========================================================================================
 // || FIM DA SEÇÃO DE OTIMIZAÇÃO                                                           ||

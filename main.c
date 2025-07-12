@@ -476,6 +476,7 @@ void print_range_mask(fe range_s, u32 bits_size, u32 offset, bool use_color) {
 void cmd_rnd(ctx_t *ctx) {
   ctx->ord_offs = MIN(ctx->ord_offs, 255 - ctx->ord_size);
   printf("[RANDOM MODE] offs: %d ~ bits: %d\n\n", ctx->ord_offs, ctx->ord_size);
+  ec_gtable_init();
   ctx_precompute_gpoints(ctx);
   ctx->job_size = MAX_JOB_SIZE;
   ctx->ts_started = tsnow();

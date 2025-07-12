@@ -14,6 +14,7 @@
 #pragma once
 
 #include "ecc.c"
+#include "xoshiro256ss.h"
 #include <assert.h>
 #include <math.h>
 #include <pthread.h>
@@ -120,6 +121,11 @@ static inline u64 rotl(const u64 x, int k) {
 
 static u64 s[4] __attribute__((aligned(64))); // Estado do Xoshiro256++
 
+// Estado do gerador vetorizado Xoshiro256** (AVX)
+static struct xoshiro256ss rng_state __attribute__((aligned(64)));
+static u64 rng_buf[8] __attribute__((aligned(64)));
+static size_t rng_idx = 8;
+
 void xoshiro256pp_seed(u64 seed) {
     s[0] = seed; s[1] = seed * 0x9e3779b97f4a7c15;
     s[2] = seed * 0xbf58476d1ce4e5b9; s[3] = seed * 0x94d049bb133111eb;
@@ -168,6 +174,8 @@ u64 _urand64() {
 // Semeia o PRNG com entropia de alta qualidade do sistema.
 void prng_seed(u64 seed) {
     xoshiro256pp_seed(seed);
+    xoshiro256ss_init(&rng_state, seed);
+    rng_idx = 8;
     check_rdrand_support();
 }
 
@@ -182,7 +190,11 @@ INLINE u64 rand64() {
         }
     }
 #endif
-    return xoshiro256pp_next();
+    if (rng_idx >= 8) {
+        xoshiro256ss_filln(&rng_state, rng_buf, 8);
+        rng_idx = 0;
+    }
+    return rng_buf[rng_idx++];
 }
 
 u32 encode_seed(const char *seed) {

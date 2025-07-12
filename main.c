@@ -544,7 +544,7 @@ void load_offs_size(ctx_t *ctx, args_t *args) {
   u32 max_offs = MAX(1ul, MAX(MIN_SIZE, range_bits) - default_bits);
   char *raw = arg_str(args, "-d");
   if (!raw && ctx->cmd == CMD_RND) {
-    ctx->ord_offs = rand64(!ctx->has_seed) % max_offs;
+    ctx->ord_offs = rand64() % max_offs;
     ctx->ord_size = default_bits;
     return;
   }
@@ -621,8 +621,12 @@ void init(ctx_t *ctx, args_t *args) {
   char *seed = arg_str(args, "-seed");
   if (seed != NULL) {
     ctx->has_seed = true;
-    srand(encode_seed(seed));
+    u32 s = encode_seed(seed);
+    srand(s);
+    prng_seed(s);
     free(seed);
+  } else {
+    prng_seed(tsnow());
   }
   char *path = arg_str(args, "-f");
   load_filter(ctx, path);

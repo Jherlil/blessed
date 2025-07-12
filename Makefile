@@ -1,20 +1,31 @@
 .PHONY: default clean build bench fmt add mul rnd blf remote
 
-CC = cc
-CC_FLAGS ?= -O3 -ffast-math -Wall -Wextra
-
-ifeq ($(shell uname -m),x86_64)
-	CC_FLAGS += -march=native -pthread -lpthread
-endif
+	CC = cc
+CC_FLAGS ?= -O3 -ffast-math -Wall -Wextra -fomit-frame-pointer -pipe -flto
+	
+	ifeq ($(shell uname -m),x86_64)
+        CC_FLAGS += -march=native -mtune=native -pthread -lpthread
+	endif
+	
+NASM      = nasm
+	ASMFLAGS  = -Ox -felf64 -w+all -w-reloc-rel-dword -DXOSHIRO256SS_TECH=1
+	XOSHIRO_DIR = xoshiro256ss-avx
+XOSHIRO_OBJS = $(XOSHIRO_DIR)/xoshiro256ss.o $(XOSHIRO_DIR)/xoshiro256ss.s.o
 
 default: build
 
 clean:
-	@rm -rf ecloop bench main a.out *.profraw *.profdata
+	@rm -rf ecloop bench main a.out *.profraw *.profdata $(XOSHIRO_OBJS)
 
-build: clean
-	$(CC) $(CC_FLAGS) main.c -o ecloop
+build: clean $(XOSHIRO_OBJS)
+	$(CC) $(CC_FLAGS) -I$(XOSHIRO_DIR) main.c $(XOSHIRO_OBJS) -o ecloop
 
+$(XOSHIRO_DIR)/xoshiro256ss.o: $(XOSHIRO_DIR)/xoshiro256ss.c
+	$(CC) $(CC_FLAGS) -c $< -o $@ -I$(XOSHIRO_DIR)
+
+$(XOSHIRO_DIR)/xoshiro256ss.s.o: $(XOSHIRO_DIR)/xoshiro256ss.s
+	$(NASM) $(ASMFLAGS) $< -o $@
+	
 bench: build
 	./ecloop bench
 
